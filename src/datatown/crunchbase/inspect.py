@@ -9,6 +9,7 @@ from psycopg.errors import QueryCanceled
 
 from datatown.config import DatabaseConfig
 from datatown.db import connect_database
+from datatown.formatting import format_bytes
 
 CRUNCHBASE_SCHEMA = "public"
 DEFAULT_COUNT_TIMEOUT_SECONDS = 60
@@ -266,19 +267,6 @@ def inspect_crunchbase(
         relations=relations,
         exact_counts_requested=exact_counts,
     )
-
-
-def format_bytes(byte_count: int) -> str:
-    """Format a non-negative byte count using binary units."""
-    if byte_count < 0:
-        raise ValueError("byte_count must not be negative")
-    value = float(byte_count)
-    units = ("B", "KiB", "MiB", "GiB", "TiB")
-    for unit in units:
-        if value < 1024 or unit == units[-1]:
-            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.2f} {unit}"
-        value /= 1024
-    raise AssertionError("unreachable")
 
 
 def _row_count_description(relation: RelationInfo) -> str:

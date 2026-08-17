@@ -39,6 +39,9 @@ These are observations, not validated referential-integrity claims.
 
 ## Organizations anomaly
 
+> Follow-up: locate the original Crunchbase database dump and determine whether it contains the
+> missing organization rows before considering any repair, reload, or storage cleanup.
+
 `public.organizations` returns an exact count of zero but still occupies 1,465,319,424 bytes,
 almost entirely in its heap. PostgreSQL maintenance statistics also report zero live and zero
 dead tuples after an autovacuum on 2026-02-13. This is consistent with an emptied relation whose

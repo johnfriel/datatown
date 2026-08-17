@@ -17,6 +17,9 @@ local People Data Labs files and does not modify the existing Crunchbase databas
 Phase 2 adds read-only inspection of the Crunchbase scrape already present in PostgreSQL. The
 observed layout and operational caveats are recorded in [docs/crunchbase.md](docs/crunchbase.md).
 
+Phase 3 adds bounded, streaming inspection and comparison of the actual PDL company CSV and JSON
+artifacts. The observed schema and proposed PostgreSQL mapping are in [docs/pdl.md](docs/pdl.md).
+
 ## Requirements
 
 - Python 3.12 or newer
@@ -80,6 +83,26 @@ uv run --env-file .env datatown crunchbase inspect --exact-counts
 
 Both forms use a read-only transaction. Exact counts have a per-table timeout so an inspection
 cannot run without a bound on a large relation.
+
+## PDL file inspection
+
+Inspect the actual files without loading either multi-gigabyte artifact into memory:
+
+```bash
+uv run datatown pdl inspect \
+  --csv data/free_company_dataset.csv \
+  --json data/free_company_dataset.json
+```
+
+The default comparison streams the first 100,000 records and probes JSON structure at several
+byte offsets. Full-file SHA-256 hashing is opt-in because it must read both files completely:
+
+```bash
+uv run datatown pdl inspect \
+  --csv data/free_company_dataset.csv \
+  --json data/free_company_dataset.json \
+  --sha256
+```
 
 ## Development
 

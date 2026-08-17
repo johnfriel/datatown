@@ -35,6 +35,7 @@ def test_help_is_available_without_configuration(monkeypatch: pytest.MonkeyPatch
     assert result.exit_code == 0
     assert "doctor" in result.stdout
     assert "crunchbase" in result.stdout
+    assert "pdl" in result.stdout
 
 
 def test_crunchbase_inspect_help_is_available_without_configuration() -> None:
@@ -42,6 +43,15 @@ def test_crunchbase_inspect_help_is_available_without_configuration() -> None:
 
     assert result.exit_code == 0
     assert "--exact-counts" in result.stdout
+
+
+def test_pdl_inspect_help_is_available_without_configuration() -> None:
+    result = runner.invoke(cli.app, ["pdl", "inspect", "--help"])
+
+    assert result.exit_code == 0
+    assert "--csv" in result.stdout
+    assert "--json" in result.stdout
+    assert "--sha256" in result.stdout
 
 
 def test_doctor_reports_both_successes(

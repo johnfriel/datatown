@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -15,6 +16,7 @@ from datatown.config import (
 )
 from datatown.crunchbase.inspect import inspect_crunchbase, render_inventory
 from datatown.db import probe_database
+from datatown.pdl.inspect import PDLInspectionError, inspect_pdl_files, render_inspection
 from datatown.storage import probe_storage
 
 app = typer.Typer(
@@ -27,6 +29,11 @@ crunchbase_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(crunchbase_app, name="crunchbase")
+pdl_app = typer.Typer(
+    help="Inspect and eventually archive/import People Data Labs datasets.",
+    no_args_is_help=True,
+)
+app.add_typer(pdl_app, name="pdl")
 
 
 def _load_config[ConfigT: (DatabaseConfig, StorageConfig)](
@@ -141,6 +148,75 @@ def crunchbase_inspect(
         raise typer.Exit(code=1) from error
 
     typer.echo(render_inventory(inventory))
+
+
+@pdl_app.command("inspect")
+def pdl_inspect(
+    csv_path: Annotated[
+        Path,
+        typer.Option(
+            "--csv",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            help="Path to the original PDL company CSV file.",
+        ),
+    ],
+    json_path: Annotated[
+        Path,
+        typer.Option(
+            "--json",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            help="Path to the original PDL company JSON file.",
+        ),
+    ],
+    sample_size: Annotated[
+        int,
+        typer.Option("--sample-size", min=1, max=20, help="Records to display."),
+    ] = 3,
+    compare_records: Annotated[
+        int,
+        typer.Option(
+            "--compare-records",
+            min=1,
+            help="Leading records to compare between representations.",
+        ),
+    ] = 100_000,
+    sha256: Annotated[
+        bool,
+        typer.Option(
+            "--sha256",
+            help="Compute full-file SHA-256 hashes; this reads both artifacts completely.",
+        ),
+    ] = False,
+) -> None:
+    """Inspect and compare the actual PDL company CSV and JSON artifacts."""
+    typer.echo("PDL company dataset inspection")
+    typer.echo(f"  CSV: {csv_path}")
+    typer.echo(f"  JSON: {json_path}")
+    typer.echo(f"  comparison window: {compare_records:,} records")
+    typer.echo(f"  full-file hashing: {'enabled' if sha256 else 'disabled'}")
+    typer.echo()
+
+    try:
+        inspection = inspect_pdl_files(
+            csv_path,
+            json_path,
+            sample_size=sample_size,
+            compare_records=compare_records,
+            compute_sha256=sha256,
+        )
+    except (OSError, PDLInspectionError, ValueError) as error:
+        typer.echo(f"Inspection failed: {error}")
+        raise typer.Exit(code=1) from error
+
+    typer.echo(render_inspection(inspection))
 
 
 if __name__ == "__main__":

@@ -6,6 +6,9 @@
 # Vendor data and derived artifacts
 /data/
 
+# Personal notes kept outside the project
+/notes/
+
 # Python environments and build output
 .venv/
 dist/
@@ -25,4 +28,3 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
-
