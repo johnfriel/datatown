@@ -16,6 +16,13 @@ from datatown.config import (
 )
 from datatown.crunchbase.inspect import inspect_crunchbase, render_inventory
 from datatown.db import probe_database
+from datatown.metadata.migrations import apply_migrations
+from datatown.pdl.archive import (
+    ArchiveArtifact,
+    archive_plan,
+    build_archive_plan,
+    parse_acquired_at,
+)
 from datatown.pdl.inspect import PDLInspectionError, inspect_pdl_files, render_inspection
 from datatown.storage import probe_storage
 
@@ -119,6 +126,31 @@ def doctor() -> None:
         raise typer.Exit(code=1)
 
 
+@app.command()
+def migrate() -> None:
+    """Create or update Datatown's metadata tables."""
+    database, config_error = _load_config(DatabaseConfig.from_env)
+    if database is None:
+        typer.echo(f"Configuration error: {config_error}")
+        raise typer.Exit(code=1)
+
+    typer.echo("Datatown metadata migration")
+    typer.echo(f"  database: {database.target_description()}")
+    typer.echo("  target schema: meta")
+    typer.echo()
+
+    try:
+        results = apply_migrations(database)
+    except Exception as error:  # CLI boundary: report service errors without a traceback.
+        detail = _safe_error(error, database.redaction_values())
+        typer.echo(f"Migration failed: {detail}")
+        raise typer.Exit(code=1) from error
+
+    for result in results:
+        status = "applied" if result.applied else "already applied"
+        typer.echo(f"  {result.migration.name}: {status}")
+
+
 @crunchbase_app.command("inspect")
 def crunchbase_inspect(
     exact_counts: Annotated[
@@ -217,6 +249,101 @@ def pdl_inspect(
         raise typer.Exit(code=1) from error
 
     typer.echo(render_inspection(inspection))
+
+
+@pdl_app.command("archive")
+def pdl_archive(
+    csv_path: Annotated[
+        Path,
+        typer.Option(
+            "--csv",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            help="Path to the untouched PDL company CSV file.",
+        ),
+    ],
+    json_path: Annotated[
+        Path,
+        typer.Option(
+            "--json",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            help="Path to the untouched PDL company JSON file.",
+        ),
+    ],
+    acquired_at: Annotated[
+        str,
+        typer.Option(
+            "--acquired-at",
+            help="Vendor acquisition date or ISO timestamp, such as 2026-08-17.",
+        ),
+    ],
+    source_url: Annotated[
+        str | None,
+        typer.Option("--source-url", help="Optional vendor download or dataset URL."),
+    ] = None,
+) -> None:
+    """Archive both original PDL company files and record their provenance."""
+    database, database_config_error = _load_config(DatabaseConfig.from_env)
+    storage, storage_config_error = _load_config(StorageConfig.from_env)
+    if database is None or storage is None:
+        if database_config_error is not None:
+            typer.echo(f"Database configuration error: {database_config_error}")
+        if storage_config_error is not None:
+            typer.echo(f"Object-storage configuration error: {storage_config_error}")
+        raise typer.Exit(code=1)
+
+    secrets = (*database.redaction_values(), *storage.redaction_values())
+    typer.echo("PDL company archive")
+    typer.echo(f"  database: {database.target_description()}")
+    typer.echo(f"  object storage: {storage.target_description()}")
+    typer.echo(f"  CSV: {csv_path}")
+    typer.echo(f"  JSON: {json_path}")
+    typer.echo("  hashing originals (streaming)...")
+
+    try:
+        plan = build_archive_plan(
+            csv_path,
+            json_path,
+            acquired_at=parse_acquired_at(acquired_at),
+            source_url=source_url,
+        )
+    except Exception as error:
+        typer.echo(f"Archive planning failed: {_safe_error(error, secrets)}")
+        raise typer.Exit(code=1) from error
+
+    typer.echo(f"  acquired at: {plan.snapshot.acquired_at.isoformat()}")
+    for artifact in plan.artifacts:
+        typer.echo(
+            f"  {artifact.metadata.role}: {artifact.metadata.object_key} "
+            f"({artifact.metadata.byte_size:,} bytes, sha256 {artifact.metadata.sha256})"
+        )
+    typer.echo(f"  manifest: {plan.snapshot.manifest_object_key}")
+    typer.echo()
+
+    def report_progress(artifact: ArchiveArtifact, transferred: int, total: int) -> None:
+        percentage = min(100, int(transferred * 100 / total)) if total else 100
+        typer.echo(f"  upload {artifact.metadata.role}: {percentage}%")
+
+    try:
+        result = archive_plan(database, storage, plan, progress=report_progress)
+    except Exception as error:  # CLI boundary: report service errors without a traceback.
+        typer.echo(f"Archive failed: {_safe_error(error, secrets)}")
+        raise typer.Exit(code=1) from error
+
+    for key in result.uploaded_keys:
+        typer.echo(f"  uploaded: {key}")
+    for key in result.existing_keys:
+        typer.echo(f"  already archived and verified: {key}")
+    metadata_status = "created" if result.recorded.created else "already recorded and verified"
+    typer.echo(f"  snapshot metadata: {metadata_status}")
+    typer.echo(f"  snapshot id: {result.recorded.snapshot_id}")
 
 
 if __name__ == "__main__":

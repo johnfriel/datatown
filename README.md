@@ -20,6 +20,11 @@ observed layout and operational caveats are recorded in [docs/crunchbase.md](doc
 Phase 3 adds bounded, streaming inspection and comparison of the actual PDL company CSV and JSON
 artifacts. The observed schema and proposed PostgreSQL mapping are in [docs/pdl.md](docs/pdl.md).
 
+Phase 4 adds the small `meta.*` provenance schema and a command that archives both untouched PDL
+originals to private S3-compatible storage. It records the snapshot only after every object has
+been uploaded or matched to an already archived object and verified. The metadata design is
+documented in [docs/metadata.md](docs/metadata.md). It does not create or load `pdl.companies`.
+
 ## Requirements
 
 - Python 3.12 or newer
@@ -103,6 +108,38 @@ uv run datatown pdl inspect \
   --json data/free_company_dataset.json \
   --sha256
 ```
+
+## Metadata migrations and PDL archival
+
+Apply the bundled, checksum-verified metadata migrations:
+
+```bash
+uv run --env-file .env datatown migrate
+```
+
+Archive both vendor-provided originals under one acquisition snapshot:
+
+```bash
+uv run --env-file .env datatown pdl archive \
+  --csv data/free_company_dataset.csv \
+  --json data/free_company_dataset.json \
+  --acquired-at 2026-08-17
+```
+
+Use `--source-url` when the vendor download URL is known. The command streams both files to
+compute SHA-256, shows the exact targets and identities, uploads large files with multipart S3
+transfers, verifies object size and hash metadata, uploads `manifest.json`, then records the
+snapshot and files in PostgreSQL. It never replaces an object at an occupied key. Repeating the
+exact command verifies and reuses the existing objects and metadata.
+
+The configured bucket must be private. Datatown uses ordinary S3-compatible calls and the layout
+`pdl/company/<acquisition-date>/...`; it does not use Supabase-specific storage APIs.
+
+For the current PDL originals, Supabase Storage's project-wide **Global file size limit** must be
+larger than 10,719,027,713 bytes; use at least `11 GB` (or `20 GB` for headroom). A bucket-level
+limit, if enabled, must also be at least that large. Supabase's Free plan cannot be configured
+high enough for these artifacts. See the official [Supabase file-limit
+documentation](https://supabase.com/docs/guides/storage/uploads/file-limits).
 
 ## Development
 

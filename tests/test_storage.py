@@ -26,3 +26,11 @@ def test_probe_storage_uses_read_only_head_bucket() -> None:
         result = probe_storage(config, client=client)
 
     assert result.bucket == config.bucket
+
+
+def test_storage_client_uses_path_style_for_s3_compatible_endpoints() -> None:
+    client = create_storage_client(storage_config())
+
+    assert client.meta.config.s3["addressing_style"] == "path"
+    assert client.meta.config.request_checksum_calculation == "when_required"
+    assert client.meta.config.response_checksum_validation == "when_required"

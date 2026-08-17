@@ -13,6 +13,24 @@ This document records bounded inspection of the actual People Data Labs free com
 Both originals should be archived. The hashes above were computed with streaming full-file reads
 and can be used as their immutable identities during the archive phase.
 
+## Phase 4 archive status
+
+The `meta` migration was applied successfully on 2026-08-17. The archive preflight and source
+hash verification also succeeded, but Supabase rejected the first multipart part with HTTP 413.
+A bounded probe established that 4 MiB is accepted while 5 MiB is rejected. Because this bucket's
+`file_size_limit` is unset, the active restriction is the project-wide Global file size limit.
+
+No dataset snapshot or file rows were recorded, no completed PDL objects exist, and failed
+multipart sessions were aborted. Raise the Supabase global limit above the 9.98 GiB JSON original
+(at least `11 GB`, preferably `20 GB`), then rerun:
+
+```bash
+uv run --env-file .env datatown pdl archive \
+  --csv data/free_company_dataset.csv \
+  --json data/free_company_dataset.json \
+  --acquired-at 2026-08-17
+```
+
 ## Inspection method
 
 - compared the first 100,000 records from both files using streaming readers;

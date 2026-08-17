@@ -54,6 +54,22 @@ def test_pdl_inspect_help_is_available_without_configuration() -> None:
     assert "--sha256" in result.stdout
 
 
+def test_pdl_archive_help_is_available_without_configuration() -> None:
+    result = runner.invoke(cli.app, ["pdl", "archive", "--help"])
+
+    assert result.exit_code == 0
+    assert "--csv" in result.stdout
+    assert "--json" in result.stdout
+    assert "--acquired-at" in result.stdout
+
+
+def test_migrate_help_is_available_without_configuration() -> None:
+    result = runner.invoke(cli.app, ["migrate", "--help"])
+
+    assert result.exit_code == 0
+    assert "metadata tables" in result.stdout
+
+
 def test_doctor_reports_both_successes(
     configured_environment: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
