@@ -14,6 +14,9 @@ Phase 1 provides the Python package, shared configuration/connectivity primitive
 SHA-256 hashing, and the read-only `datatown doctor` command. It does not inspect or import the
 local People Data Labs files and does not modify the existing Crunchbase database objects.
 
+Phase 2 adds read-only inspection of the Crunchbase scrape already present in PostgreSQL. The
+observed layout and operational caveats are recorded in [docs/crunchbase.md](docs/crunchbase.md).
+
 ## Requirements
 
 - Python 3.12 or newer
@@ -61,6 +64,23 @@ uv run --env-file .env datatown doctor
 uv run datatown --help
 ```
 
+## Crunchbase inspection
+
+Inspect the existing tables using fast PostgreSQL catalog row estimates:
+
+```bash
+uv run --env-file .env datatown crunchbase inspect
+```
+
+Request bounded exact row counts when an operator needs to verify the estimates:
+
+```bash
+uv run --env-file .env datatown crunchbase inspect --exact-counts
+```
+
+Both forms use a read-only transaction. Exact counts have a per-table timeout so an inspection
+cannot run without a bound on a large relation.
+
 ## Development
 
 ```bash
@@ -78,4 +98,3 @@ DATATOWN_RUN_INTEGRATION=1 uv run --env-file .env pytest -m integration
 
 The real vendor files under `data/` are intentionally ignored. Tests must use small synthetic
 inputs rather than PDL or Crunchbase data.
-

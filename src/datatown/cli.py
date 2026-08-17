@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Annotated
 
 import typer
 
@@ -12,6 +13,7 @@ from datatown.config import (
     StorageConfig,
     redact_secrets,
 )
+from datatown.crunchbase.inspect import inspect_crunchbase, render_inventory
 from datatown.db import probe_database
 from datatown.storage import probe_storage
 
@@ -20,6 +22,11 @@ app = typer.Typer(
     no_args_is_help=True,
     pretty_exceptions_enable=False,
 )
+crunchbase_app = typer.Typer(
+    help="Inspect the existing Crunchbase scrape without changing it.",
+    no_args_is_help=True,
+)
+app.add_typer(crunchbase_app, name="crunchbase")
 
 
 def _load_config[ConfigT: (DatabaseConfig, StorageConfig)](
@@ -103,6 +110,37 @@ def doctor() -> None:
 
     if not all_ok:
         raise typer.Exit(code=1)
+
+
+@crunchbase_app.command("inspect")
+def crunchbase_inspect(
+    exact_counts: Annotated[
+        bool,
+        typer.Option(
+            "--exact-counts",
+            help="Run bounded COUNT(*) queries instead of relying only on catalog estimates.",
+        ),
+    ] = False,
+) -> None:
+    """Report schemas, tables, columns, keys, indexes, row counts, and sizes."""
+    database, config_error = _load_config(DatabaseConfig.from_env)
+    if database is None:
+        typer.echo(f"Configuration error: {config_error}")
+        raise typer.Exit(code=1)
+
+    typer.echo("Crunchbase inspection")
+    typer.echo(f"  database: {database.target_description()}")
+    typer.echo("  mode: read-only")
+    typer.echo()
+
+    try:
+        inventory = inspect_crunchbase(database, exact_counts=exact_counts)
+    except Exception as error:  # CLI boundary: report service errors without a traceback.
+        detail = _safe_error(error, database.redaction_values())
+        typer.echo(f"Inspection failed: {detail}")
+        raise typer.Exit(code=1) from error
+
+    typer.echo(render_inventory(inventory))
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import os
 import pytest
 
 from datatown.config import Settings
+from datatown.crunchbase.inspect import inspect_crunchbase
 from datatown.db import probe_database
 from datatown.storage import probe_storage
 
@@ -22,3 +23,14 @@ def test_configured_services_are_reachable_read_only() -> None:
     assert database.database_name
     assert database.server_version
     assert storage.bucket == settings.storage.bucket
+
+    inventory = inspect_crunchbase(settings.database)
+    public_relations = {relation.name for relation in inventory.relations}
+    assert {
+        "consulting_tiers",
+        "executives",
+        "funding_round_investors",
+        "funding_rounds",
+        "organizations",
+        "unmatched_references",
+    } <= public_relations
