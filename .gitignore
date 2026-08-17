@@ -1,0 +1,28 @@
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# Vendor data and derived artifacts
+/data/
+
+# Python environments and build output
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Python and test caches
+__pycache__/
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+
