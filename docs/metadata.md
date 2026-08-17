@@ -43,3 +43,6 @@ Consequently, interruption can leave verified objects without a metadata row, bu
 metadata row claiming that missing objects were archived. Re-running the same command reuses the
 verified objects and completes the remaining steps. Datatown never silently overwrites a remote
 object whose recorded size or SHA-256 metadata differs.
+
+Upload-part TLS failures are retried with bounded backoff inside the active multipart session.
+This prevents a transient connection error from discarding all successfully transferred parts.

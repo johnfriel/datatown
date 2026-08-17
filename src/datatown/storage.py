@@ -36,7 +36,7 @@ def create_storage_client(config: StorageConfig) -> S3Client:
             # implement. Required-only preserves compatibility with ordinary S3 backends.
             request_checksum_calculation="when_required",
             response_checksum_validation="when_required",
-            retries={"max_attempts": 2, "mode": "standard"},
+            retries={"max_attempts": 5, "mode": "standard"},
             s3={"addressing_style": "path"},
             signature_version="s3v4",
         ),

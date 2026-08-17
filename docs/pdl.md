@@ -10,19 +10,27 @@ This document records bounded inspection of the actual People Data Labs free com
 | `free_company_dataset.csv` | CSV with backslash-escaped quotes | 5.24 GiB | `e4b352bc950aca4b355d50deb1a71af7399579fb1ef8537b89e6016a87e9d403` |
 | `free_company_dataset.json` | Newline-delimited JSON objects | 9.98 GiB | `e5805ceca8dd025ca36160fcd6f1d5479ecaf817cb48a71cb8393c3ff7b1cde9` |
 
-Both originals should be archived. The hashes above were computed with streaming full-file reads
-and can be used as their immutable identities during the archive phase.
+Both originals are archived. The hashes above were computed with streaming full-file reads and
+serve as their immutable identities.
 
 ## Phase 4 archive status
 
-The `meta` migration was applied successfully on 2026-08-17. The archive preflight and source
-hash verification also succeeded, but Supabase rejected the first multipart part with HTTP 413.
-A bounded probe established that 4 MiB is accepted while 5 MiB is rejected. Because this bucket's
-`file_size_limit` is unset, the active restriction is the project-wide Global file size limit.
+Archive completed on 2026-08-17 under snapshot
+`ce01d408-a2be-416b-b333-f6aaed39dbdc`. The private bucket contains:
 
-No dataset snapshot or file rows were recorded, no completed PDL objects exist, and failed
-multipart sessions were aborted. Raise the Supabase global limit above the 9.98 GiB JSON original
-(at least `11 GB`, preferably `20 GB`), then rerun:
+| Role | Object key | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| Original CSV | `pdl/company/2026-08-17/free_company_dataset.csv` | 5,629,540,965 | `e4b352bc950aca4b355d50deb1a71af7399579fb1ef8537b89e6016a87e9d403` |
+| Original JSONL | `pdl/company/2026-08-17/free_company_dataset.json` | 10,719,027,713 | `e5805ceca8dd025ca36160fcd6f1d5479ecaf817cb48a71cb8393c3ff7b1cde9` |
+| Manifest | `pdl/company/2026-08-17/manifest.json` | 763 | `cfaea83117421ae6777e582b99101d09c1e77b4662b0b8373256def13c556719` |
+
+The manifest body hash, object metadata, byte sizes, `meta.dataset_snapshots` row, and both
+`meta.dataset_files` rows were independently verified after upload. No multipart uploads remain,
+and no import run exists because Phase 4 does not load `pdl.companies`. The source URL was not
+available and is recorded as null.
+
+An identical second archive command uploaded nothing, verified all three objects, and returned the
+same snapshot ID. To repeat that check:
 
 ```bash
 uv run --env-file .env datatown pdl archive \
@@ -30,6 +38,11 @@ uv run --env-file .env datatown pdl archive \
   --json data/free_company_dataset.json \
   --acquired-at 2026-08-17
 ```
+
+The direct Supabase Storage endpoint produced occasional TLS `bad record mac` errors during the
+multi-gigabyte transfer. Datatown therefore uses serialized multipart requests with fresh
+connections and bounded per-part SSL retries. A failed part is rewound and retried without
+discarding the rest of the multipart object.
 
 ## Inspection method
 

@@ -34,3 +34,4 @@ def test_storage_client_uses_path_style_for_s3_compatible_endpoints() -> None:
     assert client.meta.config.s3["addressing_style"] == "path"
     assert client.meta.config.request_checksum_calculation == "when_required"
     assert client.meta.config.response_checksum_validation == "when_required"
+    assert client.meta.config.retries["total_max_attempts"] == 6

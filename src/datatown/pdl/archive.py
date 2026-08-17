@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from boto3.s3.transfer import TransferConfig
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, SSLError
 
 from datatown.config import DatabaseConfig, StorageConfig
 from datatown.hashing import sha256_file
@@ -21,6 +21,7 @@ from datatown.metadata.repository import RecordedSnapshot, preflight_snapshot, r
 from datatown.storage import create_storage_client
 
 if TYPE_CHECKING:
+    from botocore.awsrequest import AWSPreparedRequest
     from mypy_boto3_s3 import S3Client
     from mypy_boto3_s3.type_defs import HeadObjectOutputTypeDef
 
@@ -28,12 +29,12 @@ PDL_SOURCE = "pdl"
 PDL_DATASET = "company"
 # Large parts reduce request overhead while keeping the known PDL originals far below S3's
 # 10,000-part ceiling. Supabase separately enforces the project's cumulative file-size limit.
-MULTIPART_PART_SIZE = 64 * 1024 * 1024
+MULTIPART_PART_SIZE = 32 * 1024 * 1024
 TRANSFER_CONFIG = TransferConfig(
     multipart_threshold=MULTIPART_PART_SIZE,
     multipart_chunksize=MULTIPART_PART_SIZE,
-    max_concurrency=4,
-    use_threads=True,
+    max_concurrency=1,
+    use_threads=False,
 )
 
 
@@ -67,6 +68,23 @@ class ArchiveResult:
 
 
 ProgressReporter = Callable[[ArchiveArtifact, int, int], None]
+MAX_UPLOAD_PART_ATTEMPTS = 10
+
+
+def _close_upload_part_connection(request: AWSPreparedRequest, **_kwargs: object) -> None:
+    """Avoid reusing long-lived TLS streams for multi-gigabyte Supabase uploads."""
+    request.headers["Connection"] = "close"
+
+
+def _retry_ssl_upload_part(
+    attempts: int,
+    caught_exception: BaseException | None,
+    **_kwargs: object,
+) -> float | None:
+    """Retry a corrupted TLS part in place before s3transfer aborts the whole object."""
+    if not isinstance(caught_exception, SSLError) or attempts >= MAX_UPLOAD_PART_ATTEMPTS:
+        return None
+    return float(min(2 ** (attempts - 1), 8))
 
 
 class _UploadProgress:
@@ -348,6 +366,10 @@ def archive_plan(
     """Upload missing objects, verify all remote identities, and record provenance."""
     preflight_snapshot(database, plan.snapshot)
     client = create_storage_client(storage)
+    client.meta.events.register("before-send.s3.UploadPart", _close_upload_part_connection)
+    # Botocore uses a numeric return as retry delay, despite the stubs declaring None only.
+    retry_handler = cast(Callable[..., None], _retry_ssl_upload_part)
+    client.meta.events.register("needs-retry.s3.UploadPart", retry_handler)
     uploaded_keys: list[str] = []
     existing_keys: list[str] = []
 

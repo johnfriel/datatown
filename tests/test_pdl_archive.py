@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, SSLError
 from botocore.stub import Stubber
 
 from datatown.config import StorageConfig
@@ -15,6 +15,7 @@ from datatown.pdl.archive import (
     TRANSFER_CONFIG,
     ArchiveError,
     _ensure_file_object,
+    _retry_ssl_upload_part,
     _s3_error_detail,
     build_archive_plan,
     parse_acquired_at,
@@ -46,8 +47,10 @@ def test_parse_acquired_at_accepts_dates_and_normalizes_offsets() -> None:
 
 
 def test_multipart_parts_keep_known_artifacts_below_s3_part_limit() -> None:
-    assert MULTIPART_PART_SIZE == 64 * 1024 * 1024
+    assert MULTIPART_PART_SIZE == 32 * 1024 * 1024
     assert TRANSFER_CONFIG.multipart_chunksize == MULTIPART_PART_SIZE
+    assert TRANSFER_CONFIG.max_request_concurrency == 1
+    assert not TRANSFER_CONFIG.use_threads
 
 
 def test_build_archive_plan_hashes_originals_and_builds_deterministic_manifest(
@@ -150,3 +153,12 @@ def test_s3_error_detail_recovers_status_when_service_omits_error_text() -> None
     )
 
     assert _s3_error_detail(error) == "UploadPart: HTTP 413, code unspecified"
+
+
+def test_ssl_upload_part_errors_receive_bounded_backoff() -> None:
+    error = SSLError(endpoint_url="https://storage.example.test", error="bad record mac")
+
+    assert _retry_ssl_upload_part(attempts=1, caught_exception=error) == 1.0
+    assert _retry_ssl_upload_part(attempts=4, caught_exception=error) == 8.0
+    assert _retry_ssl_upload_part(attempts=10, caught_exception=error) is None
+    assert _retry_ssl_upload_part(attempts=1, caught_exception=RuntimeError()) is None
