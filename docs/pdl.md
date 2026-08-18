@@ -53,9 +53,9 @@ discarding the rest of the multipart object.
 
 All five offset probes had the same ten keys. No arrays or objects were observed as field values.
 
-## Observed fields and proposed PostgreSQL mapping
+## Observed fields and PostgreSQL mapping
 
-| PDL field | Observed JSON type | Nulls in first 100k | Proposed PostgreSQL | Notes |
+| PDL field | Observed JSON type | Nulls in first 100k | PostgreSQL | Notes |
 | --- | --- | ---: | --- | --- |
 | `id` | string | 0 | `text PRIMARY KEY` | PDL record/company identifier; 28 characters in offset samples |
 | `website` | string/null | 33,923 | `text` | Raw vendor value; some values include paths rather than a bare domain |
@@ -68,16 +68,16 @@ All five offset probes had the same ten keys. No arrays or objects were observed
 | `industry` | string/null | 17,015 | `text` | Scalar vendor label, not an array |
 | `linkedin_url` | string | 0 | `text` | Raw LinkedIn company path/URL |
 
-The importer must perform a full-file validation before relying on sampled nullability or adding
-`NOT NULL` constraints beyond `id` and `name`. It should reject an unexpected field set rather
-than silently dropping new vendor fields.
+The importer performs full-file validation and rejects an unexpected field set or value type
+rather than silently dropping vendor fields. It uses conservative nullability except for the PDL
+identifier and name.
 
 ## Stable identity and lookup indexes
 
 `id` is the explicit PDL identifier and is the proposed primary key. No duplicate IDs occurred in
 the first 100,000-record sample, but uniqueness must be validated across the complete import.
 
-Initial indexes proposed for the eventual `pdl.companies` table:
+Initial indexes on `pdl.companies`:
 
 - primary-key index on `id`;
 - B-tree index on `website` for exact raw-value lookup;
@@ -108,9 +108,9 @@ Therefore:
 - do not load both representations into PostgreSQL;
 - keep the eventual load bulk-oriented despite choosing JSONL.
 
-## Proposed table shape
+## Queryable table shape
 
-This is a Phase 3 proposal, not an applied migration:
+Migration `002_pdl.sql` creates:
 
 ```sql
 CREATE TABLE pdl.companies (
@@ -129,6 +129,70 @@ CREATE TABLE pdl.companies (
 
 Snapshot and file provenance belongs in `meta.*`, not as Peoplebot-specific interpretation fields
 inside `pdl.companies`.
+
+## Phase 5 import method
+
+The JSONL original is the import input because it preserves values that the vendor CSV's
+backslash-quote convention makes ambiguous. The CSV remains an archived canonical original.
+
+`datatown pdl import-companies` first hashes the local JSONL and requires its SHA-256 and byte size
+to match an archived `original_json` record. It then:
+
+1. streams every record through `jq`, requiring the exact ten-field schema, scalar/null types,
+   non-empty `id` and `name`, and PostgreSQL-range integer values for `founded`;
+2. emits standards-compliant CSV directly into PostgreSQL `COPY` for `pdl.companies_next`;
+3. builds the primary key and exact-value indexes for `website` and `linkedin_url`;
+4. checks the exact PostgreSQL row count and required identifier population; and
+5. atomically swaps the validated staging table into `pdl.companies` while marking its import run
+   successful.
+
+The primary key also performs the complete duplicate-ID check. JSON null and empty string remain
+distinct through `jq`'s CSV encoding and PostgreSQL `COPY`. The importer never constructs the
+35-million-record dataset in Python memory and does not create a second 10-GiB raw JSON staging
+table in PostgreSQL.
+
+Run the initial archived snapshot with:
+
+```bash
+uv run --env-file .env datatown migrate
+uv run --env-file .env datatown pdl import-companies \
+  --json data/free_company_dataset.json \
+  --snapshot-id ce01d408-a2be-416b-b333-f6aaed39dbdc
+```
+
+### Initial import result and capacity finding
+
+The first full attempt, import run `d92a9539-ddb1-4bfd-9c22-61532fae598a`, validated and copied all
+35,828,989 records. The completed heap measured 6,696 MB, but Supabase exhausted the initially
+provisioned database disk while building the final LinkedIn index. The staging table was removed,
+the database returned from 8,856 MB to 2,160 MB, the import run is recorded as failed, and the
+empty current table was never replaced. This is an infrastructure-capacity failure, not a vendor
+schema or data-quality failure.
+
+After the database disk was increased to 32 GB, retry run
+`57bb3d69-44fe-44c7-bc7c-2917095d5136` completed in 28 minutes 30 seconds and atomically installed
+the table. Final verification on 2026-08-17 found:
+
+| Check | Result |
+| --- | ---: |
+| Exact PostgreSQL row count | 35,828,989 |
+| Table heap | 6,696 MB |
+| Primary-key index | 1,699 MB |
+| Website index | 865 MB |
+| LinkedIn index | 2,244 MB |
+| Total `pdl.companies` relation | 11.24 GiB |
+| Whole database after import | 13 GiB |
+
+All three constraints are validated, no staging relation remains, and the successful import run
+joins through snapshot `ce01d408-a2be-416b-b333-f6aaed39dbdc` to the 10,719,027,713-byte archived
+JSONL with SHA-256
+`e5805ceca8dd025ca36160fcd6f1d5479ecaf817cb48a71cb8393c3ff7b1cde9`. Read-only
+`EXPLAIN ANALYZE` probes selected the intended primary-key, website, and LinkedIn indexes, each
+completing in approximately 1.7–1.9 ms during the verification session.
+
+Object-storage file-size settings are separate from PostgreSQL database disk capacity. Before a
+future snapshot replacement, check disk headroom again: staging-and-swap temporarily retains the
+current 11.24-GiB relation while constructing its replacement.
 
 ## Reproduce the inspection
 

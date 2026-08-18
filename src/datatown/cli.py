@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
+from uuid import UUID
 
 import typer
 
@@ -16,6 +17,7 @@ from datatown.config import (
 )
 from datatown.crunchbase.inspect import inspect_crunchbase, render_inventory
 from datatown.db import probe_database
+from datatown.formatting import format_bytes
 from datatown.metadata.migrations import apply_migrations
 from datatown.pdl.archive import (
     ArchiveArtifact,
@@ -23,6 +25,7 @@ from datatown.pdl.archive import (
     build_archive_plan,
     parse_acquired_at,
 )
+from datatown.pdl.import_companies import import_companies
 from datatown.pdl.inspect import PDLInspectionError, inspect_pdl_files, render_inspection
 from datatown.storage import probe_storage
 
@@ -128,15 +131,15 @@ def doctor() -> None:
 
 @app.command()
 def migrate() -> None:
-    """Create or update Datatown's metadata tables."""
+    """Create or update Datatown-owned database schemas and tables."""
     database, config_error = _load_config(DatabaseConfig.from_env)
     if database is None:
         typer.echo(f"Configuration error: {config_error}")
         raise typer.Exit(code=1)
 
-    typer.echo("Datatown metadata migration")
+    typer.echo("Datatown database migration")
     typer.echo(f"  database: {database.target_description()}")
-    typer.echo("  target schema: meta")
+    typer.echo("  source: bundled, checksum-verified SQL migrations")
     typer.echo()
 
     try:
@@ -344,6 +347,63 @@ def pdl_archive(
     metadata_status = "created" if result.recorded.created else "already recorded and verified"
     typer.echo(f"  snapshot metadata: {metadata_status}")
     typer.echo(f"  snapshot id: {result.recorded.snapshot_id}")
+
+
+@pdl_app.command("import-companies")
+def pdl_import_companies(
+    json_path: Annotated[
+        Path,
+        typer.Option(
+            "--json",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+            resolve_path=True,
+            help="Path to the archived PDL company JSONL original.",
+        ),
+    ],
+    snapshot_id: Annotated[
+        UUID | None,
+        typer.Option(
+            "--snapshot-id",
+            help="Require the file to belong to this archived metadata snapshot.",
+        ),
+    ] = None,
+) -> None:
+    """Validate, bulk-load, and atomically replace pdl.companies from JSONL."""
+    database, config_error = _load_config(DatabaseConfig.from_env)
+    if database is None:
+        typer.echo(f"Database configuration error: {config_error}")
+        raise typer.Exit(code=1)
+
+    typer.echo("PDL company import")
+    typer.echo(f"  database: {database.target_description()}")
+    typer.echo(f"  source JSONL: {json_path}")
+    typer.echo(f"  required snapshot: {snapshot_id or 'match by SHA-256 and byte size'}")
+    typer.echo("  target: pdl.companies")
+    typer.echo("  replacement: stage, validate, then atomically swap")
+    typer.echo()
+
+    try:
+        result = import_companies(
+            database,
+            json_path,
+            snapshot_id=snapshot_id,
+            report=lambda message: typer.echo(f"  {message}"),
+        )
+    except Exception as error:  # CLI boundary: report service errors without a traceback.
+        detail = _safe_error(error, database.redaction_values())
+        typer.echo(f"Import failed: {detail}")
+        raise typer.Exit(code=1) from error
+
+    typer.echo()
+    typer.echo("PDL company import succeeded")
+    typer.echo(f"  import run: {result.run_id}")
+    typer.echo(f"  snapshot: {result.snapshot_id}")
+    typer.echo(f"  rows: {result.row_count:,}")
+    typer.echo(f"  total relation size: {format_bytes(result.relation_size)}")
+    typer.echo(f"  source SHA-256: {result.source_sha256}")
 
 
 if __name__ == "__main__":

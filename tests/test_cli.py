@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
+from uuid import UUID
 
 import pytest
 from typer.testing import CliRunner
 
 import datatown.cli as cli
 from datatown.db import DatabaseProbeResult
+from datatown.pdl.import_companies import ImportResult
 from datatown.storage import StorageProbeResult
 
 runner = CliRunner()
@@ -63,11 +66,64 @@ def test_pdl_archive_help_is_available_without_configuration() -> None:
     assert "--acquired-at" in result.stdout
 
 
+def test_pdl_import_companies_help_is_available_without_configuration() -> None:
+    result = runner.invoke(cli.app, ["pdl", "import-companies", "--help"])
+
+    assert result.exit_code == 0
+    assert "--json" in result.stdout
+    assert "--snapshot-id" in result.stdout
+    assert "atomically replace" in result.stdout
+
+
 def test_migrate_help_is_available_without_configuration() -> None:
     result = runner.invoke(cli.app, ["migrate", "--help"])
 
     assert result.exit_code == 0
-    assert "metadata tables" in result.stdout
+    assert "database schemas and tables" in result.stdout
+
+
+def test_pdl_import_companies_reports_safe_success(
+    tmp_path: Path,
+    configured_environment: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    json_path = tmp_path / "companies.json"
+    json_path.write_text('{"id":"company"}\n', encoding="utf-8")
+    snapshot_id = UUID("ce01d408-a2be-416b-b333-f6aaed39dbdc")
+    run_id = UUID("b8b624b0-0166-4aa3-8c1d-0d3143150d84")
+
+    def succeed(_config, source, *, snapshot_id, report) -> ImportResult:
+        assert source == json_path
+        assert snapshot_id == UUID("ce01d408-a2be-416b-b333-f6aaed39dbdc")
+        report("COPY loaded 35,828,989 validated records")
+        return ImportResult(
+            run_id=run_id,
+            snapshot_id=snapshot_id,
+            row_count=35_828_989,
+            relation_size=4_294_967_296,
+            source_sha256="e" * 64,
+        )
+
+    monkeypatch.setattr(cli, "import_companies", succeed)
+
+    result = runner.invoke(
+        cli.app,
+        [
+            "pdl",
+            "import-companies",
+            "--json",
+            str(json_path),
+            "--snapshot-id",
+            str(snapshot_id),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "stage, validate, then atomically swap" in result.stdout
+    assert "35,828,989" in result.stdout
+    assert "4.00 GiB" in result.stdout
+    assert str(run_id) in result.stdout
+    assert "db-secret" not in result.stdout
 
 
 def test_doctor_reports_both_successes(

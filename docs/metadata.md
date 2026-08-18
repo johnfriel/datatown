@@ -11,8 +11,8 @@ artifacts; they do not contain Peoplebot entities or vendor records.
   object-storage manifest.
 - `meta.dataset_files` records each source file's role, original filename, object key, format,
   SHA-256, and byte size.
-- `meta.import_runs` is reserved for attempts to build queryable source tables from a snapshot.
-  Phase 4 creates it but does not write import runs.
+- `meta.import_runs` records attempts to build queryable source tables from a snapshot, including
+  importer/version, Git revision, timing, status, target, row count, and a bounded failure message.
 
 Snapshot identity is unique by source, dataset, and acquisition timestamp. Object keys and source
 file SHA-256 values are also unique. An exact repeated archive is verified and reused; conflicting
@@ -27,6 +27,23 @@ uv run --env-file .env datatown migrate
 The runner obtains a transaction-scoped advisory lock, initializes migration state, applies all
 pending bundled SQL in order, and commits atomically. Running it again reports each migration as
 already applied.
+
+Migration `002_pdl.sql` creates the typed but initially empty `pdl.companies` table. Populating or
+replacing it is a separate, explicit `datatown pdl import-companies` operation rather than a
+migration side effect.
+
+## Import-run behavior
+
+The PDL importer creates a `running` row only after it has matched the local JSONL identity to an
+archived snapshot and verified the target schema. Success status and row count are committed in
+the same transaction that exposes the fully validated replacement table. A parser, `COPY`, index,
+validation, database, or operator-interruption failure records `failed` and removes the scratch
+table without presenting it as the current dataset.
+
+Failure cleanup uses a short, explicit read-write session because Supabase may temporarily make
+new transactions read-only when disk utilization crosses its protection threshold. Cleanup holds
+the same import advisory lock and commits deletion of the bounded scratch relations before it
+updates provenance, prioritizing space recovery after a disk-full event.
 
 ## Archive failure behavior
 

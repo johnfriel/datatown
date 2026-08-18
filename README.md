@@ -23,12 +23,19 @@ artifacts. The observed schema and proposed PostgreSQL mapping are in [docs/pdl.
 Phase 4 adds the small `meta.*` provenance schema and a command that archives both untouched PDL
 originals to private S3-compatible storage. It records the snapshot only after every object has
 been uploaded or matched to an already archived object and verified. The metadata design is
-documented in [docs/metadata.md](docs/metadata.md). It does not create or load `pdl.companies`.
+documented in [docs/metadata.md](docs/metadata.md).
+
+Phase 5 adds the typed `pdl.companies` representation and a bulk JSONL importer. It validates the
+complete upstream schema and scalar types, loads a separate staging table through PostgreSQL
+`COPY`, builds and checks indexes, and only then atomically replaces the current table. The exact
+source mapping and initial archive/import record are in [docs/pdl.md](docs/pdl.md). The initial
+archived snapshot is loaded with 35,828,989 companies.
 
 ## Requirements
 
 - Python 3.12 or newer
 - [uv](https://docs.astral.sh/uv/)
+- `jq` for streaming validation and transformation of PDL JSONL imports
 - Credentials for the Datatown PostgreSQL database and private S3-compatible bucket
 
 ## Setup
@@ -109,9 +116,9 @@ uv run datatown pdl inspect \
   --sha256
 ```
 
-## Metadata migrations and PDL archival
+## Database migrations and PDL archival
 
-Apply the bundled, checksum-verified metadata migrations:
+Apply the bundled, checksum-verified migrations for Datatown's `meta` and source schemas:
 
 ```bash
 uv run --env-file .env datatown migrate
@@ -140,6 +147,28 @@ larger than 10,719,027,713 bytes; use at least `11 GB` (or `20 GB` for headroom)
 limit, if enabled, must also be at least that large. Supabase's Free plan cannot be configured
 high enough for these artifacts. See the official [Supabase file-limit
 documentation](https://supabase.com/docs/guides/storage/uploads/file-limits).
+
+## PDL company import
+
+Import the archived JSONL original into the typed queryable representation:
+
+```bash
+uv run --env-file .env datatown pdl import-companies \
+  --json data/free_company_dataset.json \
+  --snapshot-id ce01d408-a2be-416b-b333-f6aaed39dbdc
+```
+
+The local file's SHA-256 and byte size must match an archived `original_json` metadata record.
+`--snapshot-id` is optional, but using it makes the intended acquisition explicit. The importer
+requires the exact ten-field PDL schema documented below; an added, removed, or incorrectly typed
+field fails the import visibly instead of being discarded.
+
+The importer streams JSONL through `jq` into PostgreSQL's CSV `COPY` protocol. Python transfers
+bounded chunks rather than constructing one object per vendor row. Data first lands in
+`pdl.companies_next`; primary-key, website, and LinkedIn indexes plus exact count and required-field
+checks are completed there. A short final transaction swaps it into `pdl.companies` and marks the
+`meta.import_runs` row successful. Until that transaction commits, an existing current table is
+left intact. Failed or interrupted attempts are recorded and the staging table is removed.
 
 ## Development
 
